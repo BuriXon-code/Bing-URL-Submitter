@@ -1,0 +1,193 @@
+#!/bin/bash
+
+echo -e "Bing Webmaster URL Submiter\nby \e[1;31mBuriXon-code\e[0m\n"
+
+# List of required commands
+required_commands=("curl" "grep" "sed" "head" "xargs" "touch")
+
+# Check if each command is available
+for cmd in "${required_commands[@]}"; do
+    if ! command -v "$cmd" &> /dev/null; then
+        echo -e "Error: Command $cmd is not installed or not available in the system." >&2
+        exit 1
+    fi
+done
+
+# Display help
+show_help() {
+	echo -e "$(basename $0) is a script for submitting URLs from sitemap to Bing Webmasters using the Webmasters API. It parses and submits URLs from sitemap.txt and sitemap.xml on its own. It submits 100 (by default) URLs at a time and caches them so that they are not submitted again at the next time.\n"
+        echo -e "Usage:\n\n$(basename $0) [-u|--url URL] [-t|--token TOKEN] [-n|--name SITEMAP_NAME]\n	  [-f|--file FILE]\n	  [-e|--env]\n          [-c|--count COUNT]\n	  [-h|--help]\n\n"
+        echo -e "Options:\n"
+        echo -e "  -u, --url     Website URL (e.g., https://example.com/)"
+	echo -e "                The URL should contain the prefix http:// | https:// and (optionally) a / at the end."
+        echo -e "  -t, --token   API Token (e.g., abc123)"
+	echo -e "                You can generate the token in the bing webmaster panel at https://www.bing.com/webmasters/."
+        echo -e "  -n, --name    Sitemap file name (e.g., sitemap.xml)"
+	echo -e "                The script can parse sitemap in txt and simple xml format."
+	echo -e "  -c, --count   Count of URL addresses to submit. Optional parameter."
+	echo -e "                Default: 100."
+        echo -e "  -f, --file    File with data (lines: URL, token, sitemap name)"
+	echo -e "                The file used must have 3 lines, containing the following: verified URL, API Token, sitemap file name."
+        echo -e "  -e, --env     Retrieve settings from exported environment variables"
+	echo -e "                The variables must be named: \$SUBMIT_URL, \$SUBMIT_API, \$SUBMIT_SITEMAP."
+        echo -e "  -h, --help    Displays help and usage."
+	echo -e ""
+}
+
+# Settings
+count="100"
+url=""
+token=""
+sitemap_name=""
+file_mode=false
+env_mode=false
+cache_file="$HOME/.bing_sent_urls.txt"
+
+# Handling parameters
+while [ "$1" != "" ]; do
+        case $1 in
+                -h | --help )
+                        show_help
+                        exit 0
+                        ;;
+                -u | --url )
+                        shift
+                        url=${1%/}
+                        ;;
+                -t | --token )
+                        shift
+                        token=$1
+                        ;;
+                -n | --name )
+                        shift
+                        sitemap_name=$1
+                        ;;
+		-c | --count)
+			shift
+			if [[ "$1" =~ ^[0-9]+$ ]]; then
+				count="$1"
+			else
+				echo -e "Error: The value for -c|--count must be integer!" >&2
+			fi
+			;;
+                -f | --file )
+                        shift
+                        if $env_mode; then
+                                echo -e "Error: Cannot combine -e / --env and -f / --file with other parameters.\n\n" >&2
+                                show_help
+                                exit 1
+                        fi
+                        file_mode=true
+                        if [ -f "$1" ]; then
+                                url=$(sed -n '1p' "$1" | tr -d '[:space:]')
+                                token=$(sed -n '2p' "$1" | tr -d '[:space:]')
+                                sitemap_name=$(sed -n '3p' "$1" | tr -d '[:space:]')
+                        else
+                                echo -e "Error: File not found: $1 !" >&2
+                                exit 1
+                        fi
+                        ;;
+                -e | --env )
+                        if $file_mode; then
+                                echo -e "Error: Cannot combine -e / --env and -f / --file with other parameters.\n\n" >&2
+                                show_help
+                                exit 1
+                        fi
+                        env_mode=true
+                        url=${SUBMIT_URL%/}
+                        token=$SUBMIT_API
+                        sitemap_name=$SUBMIT_SITEMAP
+                        ;;
+                * )
+                        echo -e "Error: Unknown option: $1 !\n\n" >&2
+                        show_help
+                        exit 1
+                        ;;
+        esac
+        shift
+done
+
+# Conflict between -e / --env or -f / --file and other parameters
+if { $file_mode || $env_mode; } && { [ -n "$url" ] || [ -n "$token" ] || [ -n "$sitemap_name" ]; } && ! $env_mode && ! $file_mode; then
+        echo -e "Error: Cannot combine -e / --env and -f / --file with other parameters.\n\n" >&2
+        show_help
+        exit 1
+fi
+
+# Enforce providing all values when setting manually
+if ! $file_mode && ! $env_mode && { [ -z "$url" ] || [ -z "$token" ] || [ -z "$sitemap_name" ]; }; then
+        echo -e "Error: When setting manually, all parameters -u, -t, -n must be provided.\n\n" >&2
+        show_help
+        exit 1
+fi
+
+# Fetch and process sitemap
+url_list=$( curl -s "$url/$sitemap_name" | sed "s/<loc>/\n/g" | grep -i "http" | grep -v "sitemap" | cut -d "<" -f 1 )
+
+# Load URLs from cache if file exists
+if [ -f "$cache_file" ]; then
+        sent_urls=$(cat "$cache_file")
+else
+        # Create the file if it doesn't exist
+        touch "$cache_file"
+        sent_urls=""
+fi
+
+# Filter URLs to skip those already sent
+filtered_urls=$(echo "$url_list" | grep -vxFf "$cache_file" | head -n ${count})
+
+if [ -z "$url_list" ]; then
+        echo -e "Error: No URLs found in $sitemap_name.\n" >&2
+        exit 1
+fi
+
+# Filtering URLs
+json_data="{\"siteUrl\":\"$url\",\"urlList\":["
+first=true
+for link in $filtered_urls; do
+        link=$(echo $link | xargs)
+        if $first; then
+                json_data="$json_data\"$link\""
+                first=false
+        else
+                json_data="$json_data,\"$link\""
+        fi
+done
+json_data="$json_data]}"
+
+# Submit URLs
+response=$(curl -s -X POST "https://ssl.bing.com/webmaster/api.svc/json/SubmitUrlbatch?apikey=$token" \
+        -H "Content-Type: application/json; charset=utf-8" \
+        -d "$json_data")
+
+remain=$( curl -s "https://ssl.bing.com/webmaster/api.svc/json/GetUrlSubmissionQuota?siteUrl=${url}&apikey=${token}" | sed "s/\,/\n/g" | sed "s/\"//g" | grep -v -i bing | sed "s/}//g" | sed "s/Quota//g" | sed "s/:/ /g" | grep -v Error | sed "s/Message //g" )
+
+# Formatted response
+echo -e "\nResponse:\n"
+
+iffail() {
+	echo -e "$response"
+	echo
+}
+
+ifdone(){
+
+	# Save sent URLs to cache
+	for url in $filtered_urls; do
+	        echo "$url" >> "$cache_file"
+	done
+
+	echo -e "Successfully submitted!\n"
+}
+
+if [[ $response == '{"d":null}' ]]; then
+        ifdone
+	echo -e "Remaining:\n"
+        echo -e "$remain\n"
+        exit 0
+else
+        iffail
+	echo -e "Remaining:\n"
+        echo -e "$remain\n"
+        exit 1
+fi
