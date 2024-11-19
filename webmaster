@@ -1,5 +1,7 @@
 #!/bin/bash
 
+# Bing-URL-Submitter v1.0 (c) 2024 BuriXon-code <admin@burixon.com.pl>
+
 c0="\e[0m"
 c1='\e[38;2;0;163;255m'
 c2='\e[38;2;0;143;245m'
