@@ -105,8 +105,20 @@ It was tested on Kali 2024.2, Ubuntu 22.04, Ubuntu 24.04, Termux 0.119-beta.
 
 ![screenshot](/webmaster-2.png)
 
-In case of errors/problems with the script, let me know: **support@burixon.com.pl**.
+## Support
+### Contact me:
+For any issues, suggestions, or questions, reach out via:
 
+- *Email:* support@burixon.dev  
+- *Contact form:* [Click here](https://burixon.dev/contact/)
+- *Bug reports:* [Click here](https://burixon.dev/bugreport/)
+
+### Support me:
+If you find this script useful, consider supporting my work by making a donation:
+
+[**Donations**](https://burixon.dev/donate/)
+
+Your contributions help in developing new projects and improving existing tools!
 
 
 
